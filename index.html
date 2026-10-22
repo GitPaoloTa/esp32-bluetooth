@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ESP32-C3 Bluetooth</title>
+  <style>
+    body { max-width: 34rem; margin: 3rem auto; padding: 0 1rem; font: 1rem system-ui, sans-serif; }
+    button { margin: .35rem .35rem .35rem 0; padding: .65rem 1rem; }
+    #counter { font-size: 1.5rem; font-weight: 700; }
+    #message { color: #555; }
+  </style>
+</head>
+<body>
+  <h1>ESP32-C3 Bluetooth</h1>
+  <p>Shared counter: <span id="counter">Not connected</span></p>
+  <button id="connect">Connect over Bluetooth</button>
+  <button id="increment" disabled>Increment over Bluetooth</button>
+  <p id="message">Open this page from its HTTPS-hosted address, then connect to ESP32C3-Web.</p>
+  <script>
+    const SERVICE_UUID = "9f3a1000-7d6b-4c2a-9a51-4f4e53503001";
+    const STATUS_UUID = "9f3a1001-7d6b-4c2a-9a51-4f4e53503001";
+    const COMMAND_UUID = "9f3a1002-7d6b-4c2a-9a51-4f4e53503001";
+    const counterElement = document.getElementById("counter");
+    const messageElement = document.getElementById("message");
+    const decoder = new TextDecoder();
+    let commandCharacteristic;
+
+    document.getElementById("connect").addEventListener("click", async () => {
+      if (!window.isSecureContext || !navigator.bluetooth) {
+        messageElement.textContent =
+          "Web Bluetooth requires a supported browser and an HTTPS page.";
+        return;
+      }
+      try {
+        const device = await navigator.bluetooth.requestDevice({
+          filters: [{ name: "ESP32C3-Web" }],
+          optionalServices: [SERVICE_UUID]
+        });
+        device.addEventListener("gattserverdisconnected", () => {
+          commandCharacteristic = null;
+          document.getElementById("increment").disabled = true;
+          messageElement.textContent = "Bluetooth disconnected.";
+        });
+        const server = await device.gatt.connect();
+        const service = await server.getPrimaryService(SERVICE_UUID);
+        const status = await service.getCharacteristic(STATUS_UUID);
+        commandCharacteristic = await service.getCharacteristic(COMMAND_UUID);
+        await status.startNotifications();
+        status.addEventListener("characteristicvaluechanged", event => {
+          counterElement.textContent = decoder.decode(event.target.value);
+        });
+        counterElement.textContent = decoder.decode(await status.readValue());
+        document.getElementById("increment").disabled = false;
+        messageElement.textContent = "Connected to " + device.name + " over Bluetooth.";
+      } catch (error) {
+        messageElement.textContent = "Bluetooth connection failed: " + error.message +
+          ". Confirm the ESP32 is powered, running the latest sketch, and advertising as ESP32C3-Web.";
+      }
+    });
+
+    document.getElementById("increment").addEventListener("click", async () => {
+      if (!commandCharacteristic) return;
+      try {
+        await commandCharacteristic.writeValue(new TextEncoder().encode("increment"));
+      } catch (error) {
+        messageElement.textContent = "Bluetooth command failed: " + error.message;
+      }
+    });
+  </script>
+</body>
+</html>
